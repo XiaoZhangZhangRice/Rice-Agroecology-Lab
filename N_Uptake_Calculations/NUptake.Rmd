@@ -1,0 +1,273 @@
+---
+title: "N uptake calculations"
+author: "Zhang Zhenglin"
+output:
+  pdf_document:
+    toc: yes
+  html_notebook:
+    toc: yes
+    toc_float: yes
+editor_options:
+  markdown:
+    wrap: sentence
+---
+
+# Necessary libraries
+
+```{r echo=FALSE,message=FALSE,warning=FALSE}
+library(ggplot2)
+theme_set(theme_bw())
+library(emmeans)
+library(multcomp)
+library(PLS205)
+library(lme4)
+library(lmerTest)
+library(multcompView)
+library(car)
+library(Rmisc) 
+library(dplyr) #https://r4ds.had.co.nz/ (Chapter 3, Chapter 5, look at filter and select)
+library(stringr) 
+library(readxl)
+library(writexl)
+```
+
+# Read and check data
+
+```{r}
+#read data
+master = read_excel('SIF_NRate_NUptake_Base_Dataframe.xlsx', sheet = 1)
+
+master$Sample_Weight_mg <- as.numeric(master$Sample_Weight_mg)                     
+
+str(master)
+
+table(master$Stage)
+table(master$Treatment)
+table(master$Topdress)
+table(master$Blk)
+table(master$Year)
+
+
+#dataset looks good and complete
+```
+
+# N uptake calculations
+
+N uptake for PI and 50% heading are determined from non-segregated plant parts.
+i.e. the whole plant was ground to a powder together and is representative of the crop's N uptake.
+As most of the tissue here is vegetative, we assume that ambient moisture is the same as straw (8.27%)
+
+N uptake for maturity are determined from separated plant parts - grain and straw.
+This step calculates N present in grain and straw, but do not sum them yet.
+Moisture for is 8.27% for straw and 9.76% for grains.
+
+Dry samples were measured after stabilizing in the oven for a period of time (\>24hrs) and was measured to be 1.9%.
+
+For 2023, we directly used yield.
+Grain yield was reported at 14%
+
+For 2023, grain was harvested by combine.
+A sub-sample was taken to evaluate N uptake.
+Harvest index (HI) was quantified from this subsample and used to estimate straw weight.
+
+For for information on moisture calculations: <https://edis.ifas.ufl.edu/publication/AG442>
+
+```{r}
+#Getting: g N per g of microbalanced sample (g/g)
+
+master$N_per_g_microbalanced_sample <- ((master$SIF_N_µg)/(master$Sample_Weight_mg))/1000
+
+#Dry sample weight is at 1.9% for 2021 and 2022 samples, 14% for 2023 samples
+#We need to correct the weight for ambient moisture where the samples were measured into tin capsules
+
+master$Ambient_Sample_Weight_g <- master$Dry_Sample_Weight_g*((100-master$Dry_sample_moisture_percent)/(100-master$Microbalance_moisture_percent))
+
+str(master)
+```
+
+```{r}
+#Total N uptake = g N per g of microbalanced sample (g/g)*total sample weight (g)/area harvested (m2) 
+#then scale from g/m2 to kg/ha
+
+master$N_total_kgha <- ((master$N_per_g_microbalanced_sample*master$Ambient_Sample_Weight_g)/1000) * (10000/master$Area_harvested_m2)
+
+str(master)
+```
+
+# Getting the maturity summed values: summing N uptake values of straw and grain
+
+```{r}
+#separate into straw and grains for summing
+maturity_straw <- master %>%  filter(Stage == ("Maturity_Straw"))
+maturity_grain <- master %>%  filter(Stage == ("Maturity_Grain"))
+
+
+#maturity_straw <- 
+ # maturity_straw %>% 
+  #filter(Year != 2021) %>%
+ # mutate(Plot = substr(SampleID, 1, 3)) 
+
+#maturity_grain <- 
+ # maturity_straw %>% 
+  #filter(Year != 2021) %>%
+  #mutate(Plot = substr(SampleID, 1, 3)) 
+
+as.numeric(maturity_straw$Plot) - as.numeric(maturity_grain$Plot) 
+
+#Create dataframe for maturity total N uptake
+maturity_summed <- as.data.frame(rbind(master[1:36,], master[109:156,], master[241:288,])) 
+# just so we can keep the other columns
+maturity_summed$Stage <- "Maturity"
+
+#sum grain and straw into one maturity total N uptake dataframe
+maturity_summed$N_total_kgha <- maturity_straw$N_total_kgha+maturity_grain$N_total_kgha
+
+str(maturity_summed)
+```
+
+# Bind everything back again - this is such a pain in the rear end. Add in plots and Nrates
+
+```{r}
+#Well I was a clown when I started the PhD, so I named everything for excel LOL. 
+#Because name formatting was different by year, I split the dataframe by year and wrangle it as needed
+
+# extract PI and Heading N uptake values
+master_maturity_summed <- rbind(master[73:108,], master[205:240,], maturity_summed)
+
+#add in plot and treatments
+
+master_maturity_summed_2021 <- 
+  master_maturity_summed %>% 
+  filter(Year == 2021) %>%
+  mutate(Plot = substr(SampleID, 5, 7)) %>%
+  mutate(Treatment = case_when(
+  Plot %in% c("101", "102", "103", "104", "105", "106",
+              "201", "202", "203", "204", "205", "206",
+              "301", "302", "303", "304", "305", "306") ~ "FR",
+  Plot %in% c("107", "108", "109", "110", "111", "112",
+              "207", "208", "209", "210", "211", "212",
+              "307", "308", "309", "310", "311", "312") ~ "CR",
+  TRUE ~ "Other" # This line handles cases where plot is not listed
+  )) 
+
+master_maturity_summed_others <- 
+  master_maturity_summed %>% 
+  filter(Year != 2021) %>%
+  mutate(Plot = substr(SampleID, 1, 3)) %>%
+  mutate(Treatment = case_when(
+  Plot %in% c("401", "402", "403", "404", "405", "406",
+              "501", "502", "503", "504", "505", "506",
+              "601", "602", "603", "604", "605", "606",
+              "701", "702", "703", "704", "705", "706",
+              "801", "802", "803", "804", "805", "806",
+              "901", "902", "903", "904", "905", "906") ~ "FR",
+  Plot %in% c("407", "408", "409", "410", "411", "412",
+              "507", "508", "509", "510", "511", "512",
+              "607", "608", "609", "610", "611", "612",
+              "707", "708", "709", "710", "711", "712",
+              "807", "808", "809", "810", "811", "812",
+              "907", "908", "909", "910", "911", "912") ~ "CR",
+  TRUE ~ "Other" # This line handles cases where plot is not listed
+  )) 
+
+master_maturity_summed_clean <- rbind(master_maturity_summed_2021, master_maturity_summed_others)
+
+# add in blk, days
+
+master_maturity_summed_clean <- master_maturity_summed_clean %>%
+  mutate(Blk = substr(Plot, 1, 1))%>%
+  mutate(Days = case_when(
+  Stage %in% c("PI") ~ "47",
+  Stage %in% c("Heading") ~ "82",
+  Stage %in% c("Maturity") ~ "134",
+  TRUE ~ "Other" # This line handles cases where plot is not listed
+  ))
+
+# read in Nrate reference file
+
+#clean the data frame to have one plot match with one Nrate
+Nrate_ref <- read_excel("D:/Academics/UC Davis/School Work/Linquist Lab/Data/R stats/Agronomic paper/Yield/master_yields.xlsx", sheet = 1) %>%  mutate(Plot = substr(Plot, 1, 3)) %>% mutate(Nrate_kgha = Nrate) %>%  distinct(Plot, .keep_all = TRUE)
+
+# put in the Nrate for all the plots
+master_maturity_summed_clean <- master_maturity_summed_clean %>%
+  left_join(Nrate_ref %>% select(Plot, Nrate_kgha), by = "Plot") 
+```
+
+# Export dataframe
+
+```{r}
+for_export <- master_maturity_summed_clean %>% 
+                         select(SampleID,
+                                Plot,
+                                Stage,
+                                Treatment,
+                                Year,
+                                Topdress,
+                                N_total_kgha,
+                                Blk,
+                                Days,
+                                Nrate_kgha)
+
+head(master_maturity_summed_clean)
+
+write_xlsx(for_export, "N_uptake_Maturity_Summed_Clean.xlsx")
+```
+
+# Filtering for N uptake over time
+
+```{r}
+N_over_time <- master_maturity_summed_clean %>% 
+               filter(Topdress == '0') %>%
+               select(SampleID,
+                                Plot,
+                                Stage,
+                                Treatment,
+                                Year,
+                                Topdress,
+                                N_total_kgha,
+                                Blk,
+                                Days,
+                                Nrate_kgha)
+
+write_xlsx(N_over_time, "D:/Academics/UC Davis/School Work/Linquist Lab/Data/R stats/Agronomic paper/N uptake/N uptake over time - 2021_22/N_uptake_over_time.xlsx")
+```
+
+# Plot a small visualization to make sure things generally look good
+
+```{r}
+Nrate_trial <- master_maturity_summed_clean %>% 
+  #filter(Year != 2023) %>% 
+  filter(Topdress!=1) %>% 
+  filter(Stage=="Maturity") %>%
+  mutate(Year= as.factor(Year))
+  #group_by(Treatment, Nrate_kgha, Year) %>%
+  #mutate(N_total_kgha_se = sd(N_total_kgha)/sqrt(3)) %>%
+  #summarise(N_total_kgha = mean(N_total_kgha),
+  #N_total_kgha_se = mean(N_total_kgha_se))
+
+
+all_Nuptake_graph <-
+ggplot(Nrate_trial, aes(x=Nrate_kgha, y=N_total_kgha, color=Treatment,shape = Year))+
+  geom_point(size=2.5)+
+  geom_smooth(aes(group = Treatment),method = lm, alpha=0.5)+
+  scale_color_manual(values=c("#0072B2","#FFCC66"), name = "Treatment", labels = c("Continuous rice (CR)", "Fallow rice (FR)"))+
+  scale_x_continuous(name=expression("N Rate (kg N ha"^{-1}*")"), limits = c(-20, 300), expand = c(0, 0), breaks = seq(0, 300, by = 50))+
+  scale_y_continuous(name=expression("N Uptake (kg N ha"^{-1}*")"), limits = c(0, 300), expand = c(0, 0), breaks = seq(0, 300, by = 50))+
+  #geom_errorbar(aes(ymin=N_total_kgha-N_total_kgha_se, ymax=N_total_kgha+N_total_kgha_se), width=3,position=position_dodge(0.5))+
+  #geom_vline(xintercept = c(41, 50, 78, 84, 121, 136), linetype = "dashed", color = "black") +
+  theme_classic()+
+  theme(axis.text = element_text(size = 14), axis.title = element_text(size=16))+
+  theme(legend.text = element_text(size = 12),legend.title = element_text(size = 14))+
+  theme(plot.title = element_text(hjust = 0.5, size = 15))
+
+
+ggsave(filename = "all_Nuptake_graph.png",  # Include the file extension here
+       plot = all_Nuptake_graph,            # Specify the plot
+       path = "D:/Academics/UC Davis/School Work/Linquist Lab/Data/R stats/Agronomic paper/Figures",
+       dpi = 400,
+       height = 30, width = 30, units = "cm")
+
+all_Nuptake_graph
+
+#plots seem to make sense. Lets proceed with more fun things!!!!
+```
