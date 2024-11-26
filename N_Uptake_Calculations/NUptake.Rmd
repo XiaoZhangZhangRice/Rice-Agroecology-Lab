@@ -12,6 +12,18 @@ editor_options:
     wrap: sentence
 ---
 
+# Background
+
+Nitrogen (N) is the currency of agronomic systems, making crop N uptake a key response variable in many research projects. The research group in the beginning of 2024 realised that N uptake calculations often did not account for moisture of samples that were at differring stages. This could lead to inaccurate computations of N upatake. 
+
+Telha Rehman performed empirical analysis, showing that samples had the following corresponding moisture contents:
+
+Oven dry: 1.9%
+Ambient straw: 8.27%
+Ambient grain: 9.76%
+
+The basic idea of this script - which can be adapted for everyone's individual project - is that computation involving two or more weights need to be corrected for moisture. In this script, Zhang has chosen to correct all weights to the "ambient" values. 
+
 # Necessary libraries
 
 ```{r echo=FALSE,message=FALSE,warning=FALSE}
@@ -37,7 +49,7 @@ library(writexl)
 #read data
 master = read_excel('SIF_NRate_NUptake_Base_Dataframe.xlsx', sheet = 1)
 
-master$Sample_Weight_mg <- as.numeric(master$Sample_Weight_mg)                     
+master$Microbalance_sample_Weight_mg <- as.numeric(master$Microbalance_sample_Weight_mg)                     
 
 str(master)
 
@@ -52,6 +64,12 @@ table(master$Year)
 ```
 
 # N uptake calculations
+
+There were samples taken at different physiological stages for Zhang's study. If you have samples taken before maturity, please pay close attention to the choices made below. If all samples were taken at maturity, then focus on how samples at maturity can be handled. 
+
+Specifically for this data set, maturity samples were harvested (1) by hand and (2) by a combine. 
+
+For (1) harvest by hand oven dry weights were used. For (2) combine harvest, 14% moisture was used in combination with harvest index was used to calculate N uptake. 
 
 N uptake for PI and 50% heading are determined from non-segregated plant parts.
 i.e. the whole plant was ground to a powder together and is representative of the crop's N uptake.
@@ -70,17 +88,17 @@ For 2023, grain was harvested by combine.
 A sub-sample was taken to evaluate N uptake.
 Harvest index (HI) was quantified from this subsample and used to estimate straw weight.
 
-For for information on moisture calculations: <https://edis.ifas.ufl.edu/publication/AG442>
+For for information on calculating weights based on moisture: <https://edis.ifas.ufl.edu/publication/AG442>
 
 ```{r}
-#Getting: g N per g of microbalanced sample (g/g)
+#Getting N concentration: g N per g of microbalanced sample (g/g)
 
-master$N_per_g_microbalanced_sample <- ((master$SIF_N_µg)/(master$Sample_Weight_mg))/1000
+master$N_per_g_microbalanced_sample <- ((master$SIF_N_µg)/(master$Microbalance_sample_Weight_mg))/1000
 
-#Dry sample weight is at 1.9% for 2021 and 2022 samples, 14% for 2023 samples
-#We need to correct the weight for ambient moisture where the samples were measured into tin capsules
+#Dry sample weight is at 1.9% for 2021 and 2022 samples, 14% for 2023 samples. These values were pre populated in the excel
+#We need to correct the weight for ambient moisture where the samples were measured into tin capsules during microbalancing 
 
-master$Ambient_Sample_Weight_g <- master$Dry_Sample_Weight_g*((100-master$Dry_sample_moisture_percent)/(100-master$Microbalance_moisture_percent))
+master$Ambient_Sample_Weight_g <- master$Oven_dry_Sample_Weight_g*((100-master$Oven_dry_sample_moisture_percent)/(100-master$Microbalance_ambient_moisture_percent))
 
 str(master)
 ```
@@ -263,7 +281,7 @@ ggplot(Nrate_trial, aes(x=Nrate_kgha, y=N_total_kgha, color=Treatment,shape = Ye
 
 ggsave(filename = "all_Nuptake_graph.png",  # Include the file extension here
        plot = all_Nuptake_graph,            # Specify the plot
-       path = "D:/Academics/UC Davis/School Work/Linquist Lab/Data/R stats/Agronomic paper/Figures",
+       path = "C:/Users/zhang/Documents/GitHub/Rice-Agroecology-Lab/N_Uptake_Calculations",
        dpi = 400,
        height = 30, width = 30, units = "cm")
 
